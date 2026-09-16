@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TOPPY BIRD - KAIJU BATTLE EDITION</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;background:#090817;color:#fff;font-family:monospace;overflow:hidden}
+body{display:grid;place-items:center;height:100vh}.wrap{width:min(1280px,100vw);aspect-ratio:16/9;position:relative}
+canvas{width:100%;height:100%;display:block;image-rendering:pixelated;background:#111;outline:0}
+.hint{position:fixed;bottom:8px;left:0;right:0;text-align:center;font-size:12px;color:#aaa}
+</style>
+</head>
+<body>
+<div class="wrap"><canvas id="game" width="1280" height="720" tabindex="0"></canvas></div>
+<div class="hint">Keyboard: 1/2 select stage • SPACE jump/shoot • WASD/ARROWS move • M sound • ESC menu</div>
+<script>
+"use strict";
+const C=document.getElementById("game"),g=C.getContext("2d"),W=1280,H=720,G=90;
+g.imageSmoothingEnabled=false;
+
+const S={MENU:0,FLAPPY:1,SHOOTER:2}; let stage=S.MENU,soundOn=true;
+let last=performance.now(),keys={},audioCtx=null;
+
+const A={};
+function asset(path){let im=new Image();im.src=path;return im}
+function loadAssets(){
+  A.top=asset("Top.png"); A.gold=asset("TopGold.png"); A.ui=asset("TopUI.png"); A.dark=asset("dark_boss.png");
+  A.boss=[];
+  const names=["01_boss_idle_breath_left.png","02_boss_idle_crossed_arms_1_left.png","03_boss_idle_crossed_arms_2_left.png","04_boss_intro_look_up_left.png","05_boss_intro_aura_powerup_left.png","06_boss_claw_prep_left.png","07_boss_claw_slash_arc_left.png","08_boss_claw_slash_impact_left.png","09_boss_claw_hit_effect_left.png","10_boss_battle_stance_left.png","11_boss_ranged_charge_left.png","12_boss_ranged_gather_orb_left.png","13_boss_ranged_beam_launch_left.png","14_boss_ultimate_full_beam_left.png","15_boss_projectile_fx_left.png"];
+  names.forEach(n=>A.boss.push(asset("boss_pixel_art_sprites_left_transparent/"+n)));
+}
+loadAssets();
+
+function beep(freq=440,dur=.06,type="square"){
+ if(!soundOn)return;
+ try{audioCtx??=new (window.AudioContext||window.webkitAudioContext)();let o=audioCtx.createOscillator(),a=audioCtx.createGain();o.type=type;o.frequency.value=freq;a.gain.value=.035;o.connect(a);a.connect(audioCtx.destination);o.start();a.gain.exponentialRampToValueAtTime(.0001,audioCtx.currentTime+dur);o.stop(audioCtx.currentTime+dur)}catch(e){}
+}
+function music(){/* Browser autoplay policies prevent automatic BGM until user interaction. Game SFX remains available after interaction. */}
+
+let birdY,birdV,pipes=[],s1=0,over1=false;
+function reset1(){birdY=H/2;birdV=0;s1=0;over1=false;pipes=[800,1200,1600,2000].map(x=>({x,gap:200+Math.random()*(H-G-400),passed:false}))}
+let px,py,hp,s2,gold=false,goldStart=0,lastGold=0,ui=false,lastBeam=0,meteors=[],bullets=[],bossBullets=[],start2=0;
+let boss={active:false,warning:false,defeated:false,phase:1,transform:false,transformStart:0,x:0,y:0,w:200,h:200,hp:500,max:500,sprite:0,lastSprite:0,lastShot:0,attack:0,warningStart:0};
+function reset2(){
+ px=120;py=H/2;hp=20;s2=0;gold=false;goldStart=0;lastGold=0;ui=false;lastBeam=0;meteors=[];bullets=[];bossBullets=[];
+ start2=performance.now();boss={active:false,warning:false,defeated:false,phase:1,transform:false,transformStart:0,x:0,y:0,w:200,h:200,hp:500,max:500,sprite:0,lastSprite:0,lastShot:0,attack:performance.now(),warningStart:0}
+}
+reset1();
+
+function text(t,x,y,size,color="#fff",align="left"){g.font=`bold ${size}px monospace`;g.textAlign=align;g.fillStyle=color;g.fillText(t,x,y)}
+function rect(x,y,w,h,c){g.fillStyle=c;g.fillRect(x,y,w,h)}
+function char(x,y,w,h,form,goldForm){
+ let im=form&&A.ui.complete?A.ui:goldForm&&A.gold.complete?A.gold:A.top;
+ if(im&&im.complete&&im.naturalWidth){let sc=Math.min(w/im.naturalWidth,h/im.naturalHeight)*1.6,dw=im.naturalWidth*sc,dh=im.naturalHeight*sc;
+   if(form&&Math.floor(performance.now()/90)%2===0)rect(x-w/2-12,y-h/2-12,w+24,h+24,"rgba(0,255,255,.3)");
+   if(goldForm&&!form&&Math.floor(performance.now()/110)%2===0)rect(x-w/2-10,y-h/2-10,w+20,h+20,"rgba(255,215,0,.35)");
+   g.drawImage(im,x-dw/2,y-dh/2,dw,dh);
+ }else{rect(x-w/2,y-h/2,w,h,form?"#fff":goldForm?"#ffd700":"#f90");g.strokeStyle="#000";g.strokeRect(x-w/2,y-h/2,w,h)}
+}
+
+function menu(){
+ rect(0,0,W,H,"#0a0819");for(let i=0;i<90;i++){let x=i*127%W,y=i*97%H;rect(x,y,i%2?2:4,i%2?2:4,"#fff")}
+ text("TOPPY BIRD",W/2+6,166,85,"#000","center");text("TOPPY BIRD",W/2,160,85,"#ffe600","center");
+ text("< SELECT STAGE >",W/2,230,26,"#96c8ff","center");button(390,290,500,80,"[ 1 ] ORIGINAL FLAPPY BIRD");button(390,410,500,80,"[ 2 ] METEOR SHOOTING BOSS");
+ text("1 / 2 = Select Stage    |    M = Sound (On/Off)    |    ESC = Exit",W/2,630,18,"#ddd","center")
+}
+function button(x,y,w,h,t){rect(x+6,y+6,w,h,"#000");rect(x,y,w,h,"#1e285f");g.strokeStyle="#ffd700";g.strokeRect(x,y,w,h);text(t,x+w/2,y+h/2+8,22,"#fff","center")}
+
+function flappyBg(){rect(0,0,W,H,"#5c94fc");rect(1040,50,100,100,"#ffdc32");rect(1060,70,60,60,"#ffff78");cloud(150,80);cloud(700,120);rect(0,H-G,W,G,"#de9e41");rect(0,H-G,W,24,"#58d858");rect(0,H-G+24,W,8,"#209820")}
+function cloud(x,y){rect(x,y,96,32,"#fff");rect(x+16,y-16,64,16,"#fff")}
+function pipe(p){let top=p.gap-112.5,bottom=p.gap+112.5;rect(p.x,0,95,top,"#74bb2b");rect(p.x,0,8,top,"#deef9c");g.strokeStyle="#000";g.strokeRect(p.x,0,95,top);rect(p.x-6,top-24,107,24,"#74bb2b");g.strokeRect(p.x-6,top-24,107,24);rect(p.x,bottom,95,H-G-bottom,"#74bb2b");rect(p.x,bottom,8,H-G-bottom,"#deef9c");g.strokeRect(p.x,bottom,95,H-G-bottom);rect(p.x-6,bottom,107,24,"#74bb2b");g.strokeRect(p.x-6,bottom,107,24)}
+function draw1(){flappyBg();pipes.forEach(pipe);char(300,birdY,80,80,false,false);text(String(s1),W/2+4,84,65,"#000","center");text(String(s1),W/2,80,65,"#fff","center");text("STAGE 1 - ORIGINAL FLAPPY",30,40,22,"#ffe600");text("SPACE = JUMP",30,68,18);text("M = SOUND",W-30,40,18,"#fff","right");text("ESC = MENU",W-30,68,18,"#fff","right");
+ if(over1){rect(0,0,W,H,"rgba(0,0,0,.78)");text("GAME OVER",W/2,280,75,"#f33","center");text("FINAL SCORE: "+s1,W/2,355,35,"#ffe600","center");text("PRESS SPACE / ENTER TO RESTART",W/2,435,22,"#fff","center");text("PRESS ESC FOR MENU",W/2,480,22,"#fff","center")}}
+function update1(dt){birdV+=.7*dt/16;birdY+=birdV*dt/16;pipes.forEach(p=>p.x-=5*dt/16);pipes.forEach((p,i)=>{if(p.x+95<0){let m=Math.max(...pipes.map(q=>q.x));pipes[i]={x:m+400,gap:200+Math.random()*(H-G-400),passed:false}}});pipes.forEach(p=>{if(!p.passed&&p.x+95<300){p.passed=true;s1++;beep(700);if(s1%10===0)beep(1000,.12)}});if(birdY-40<=0||birdY+40>=H-G||pipes.some(p=>300+40>p.x&&300-40<p.x+95&&(birdY-40<p.gap-112.5||birdY+40>p.gap+112.5))){over1=true}}
+
+function shooterBg(){let c=boss.phase===3?"#32050a":boss.phase===2?"#1e0519":"#0c0a20";rect(0,0,W,H,c);for(let i=0;i<150;i++){let x=i*71%W,y=i*137%(H-G);rect(x,y,i%2?2:3,boss.phase===3?3:i%2?2:3,boss.phase===3?"#ff5050":boss.phase===2?"#ff7890":"#b0c8ff")}if(boss.phase===2){rect(1000,90,130,130,"#8c1e3c");rect(1030,120,70,70,"#be3c5a")}else if(boss.phase<2){rect(1000,90,130,130,"#3c3c82");rect(1030,120,70,70,"#5a5aaa")}}
+function meteor(m){rect(m.x,m.y,m.size,m.size,"#6e6e78");g.strokeStyle="#000";g.strokeRect(m.x,m.y,m.size,m.size);rect(m.x+m.size/4,m.y+m.size/3,m.size/4,m.size/4,"#3c3c46")}
+function bullet(b){rect(b.x,b.y,b.w,b.h,b.beam||b.ui?"#fff":b.gold?"#ffd700":"#ff0");if(!b.beam&&!b.ui&&!b.gold)rect(b.x-6,b.y,8,b.h,"#f80");g.strokeStyle=b.beam||b.ui?"#0ff":"#000";g.strokeRect(b.x,b.y,b.w,b.h)}
+function bb(b){let c=b.beam?"#dc50ff":b.giant?"#ff3250":b.dark?"#ff1e32":"#d232ff";rect(b.x,b.y,b.w,b.h,c);g.strokeStyle=b.giant?"#ff0":"#000";g.strokeRect(b.x,b.y,b.w,b.h)}
+function update2(dt,now){
+ let sp=ui?9:6.5;if(keys.ArrowUp||keys.w)py-=sp*dt/16;if(keys.ArrowDown||keys.s)py+=sp*dt/16;if(keys.ArrowLeft||keys.a)px-=sp*dt/16;if(keys.ArrowRight||keys.d)px+=sp*dt/16;px=Math.max(0,Math.min(W-80,px));py=Math.max(0,Math.min(H-G-80,py));
+ if(gold&&now-goldStart>=7000)gold=false;
+ if(ui&&boss.phase===3&&boss.active&&!boss.transform&&now-lastBeam>=5000){lastBeam=now;bullets.push({x:px+80,y:py+15,w:300,h:40,damage:35,ui:true,beam:true});beep(900,.15)}
+ if(now-(meteors.last||0)>=600){meteors.last=now;let size=35+Math.random()*50;meteors.push({x:W,y:Math.random()*(H-G-size),size,speed:2.5+Math.random()*3.5})}
+ meteors.forEach(m=>m.x-=m.speed*dt/16);meteors=meteors.filter(m=>m.x>-m.size&&!hit(m,{x:px,y:py,w:80,h:80},true));
+ bullets.forEach(b=>b.x+=12*dt/16);
+ for(let bi=bullets.length-1;bi>=0;bi--){let b=bullets[bi],removed=false;for(let mi=meteors.length-1;mi>=0;mi--){if(hit(b,meteors[mi])){s2++;if(s2%20===0&&!ui){gold=true;goldStart=now;lastGold=s2;beep(1000,.12)}if(s2>=100&&!ui){ui=true;gold=false;beep(1400,.2)}meteors.splice(mi,1);if(!b.beam){bullets.splice(bi,1)}removed=true;beep(600);break}}if(removed)continue;if(boss.active&&!boss.transform&&hit(b,boss)){boss.hp-=b.damage;if(!b.beam)bullets.splice(bi,1);if(boss.hp<=0)phaseNext(now)}}
+ bullets=bullets.filter(b=>b.x<W+350);
+ if(boss.warning&&now-boss.warningStart>=3000){boss.warning=false;boss.active=true;boss.x=W-280;boss.y=220;boss.phase=1;boss.w=boss.h=200;boss.max=boss.hp=500;boss.lastShot=now;boss.lastSprite=now}
+ if(!boss.active&&!boss.defeated&&!boss.warning&&now-start2>=30000){boss.warning=true;boss.warningStart=now;beep(120,.5)}
+ if(boss.transform){if(now-boss.transformStart>=2500){boss.transform=false;if(boss.phase===2){boss.w=boss.h=200;boss.max=boss.hp=1250}else{boss.w=boss.h=450;boss.max=boss.hp=5000}boss.attack=now;boss.lastShot=now}}
+ if(boss.active&&!boss.transform){boss.y+=(py-boss.h/2-boss.y)*(boss.phase===3?.035:boss.phase===2?.07:.045);boss.y=Math.max(20,Math.min(H-G-boss.h,boss.y));
+  if(boss.phase===1&&now-boss.lastSprite>1500){boss.lastSprite=now;boss.sprite=(boss.sprite+1)%15}
+  if(boss.phase===3){if(now-boss.attack>=12000){boss.attack=now;for(let a of[-.4,-.2,0,.2,.4])bossBullets.push({x:boss.x,y:boss.y+boss.h/2,vx:-18*Math.cos(a),vy:18*Math.sin(a),w:160,h:160,dark:true,giant:true})}else if(now-boss.lastShot>600){boss.lastShot=now;fireBoss(true,now)}}
+  else if(boss.phase===2){if(now-boss.attack>=15000){boss.attack=now;spread2()}else if(now-boss.lastShot>850){boss.lastShot=now;fireBoss(true,now)}}else if(now-boss.lastShot>1200){boss.lastShot=now;fireBoss(false,now)}
+ }
+ bossBullets.forEach(b=>{b.x+=b.vx*dt/16;b.y+=b.vy*dt/16});bossBullets=bossBullets.filter(b=>b.x>-300&&b.x<W+300&&b.y>-300&&b.y<H+300&&!hit(b,{x:px,y:py,w:80,h:80}));
+ if(hp<=0)reset2();
+}
+function hit(a,b,consume=false){return a.x<b.x+(b.w??b.size)&&a.x+(a.w??a.size)>b.x&&a.y<b.y+(b.h??b.size)&&a.y+(a.h??a.size)>b.y}
+function fireBoss(dark,now){let sx=boss.x,sy=boss.y+boss.h/2,tx=px,ty=py+40,dx=tx-sx,dy=ty-sy,l=Math.hypot(dx,dy)||1,sp=boss.phase===3?9:boss.phase===2?7.5:5.5;bossBullets.push({x:sx,y:sy,vx:dx/l*sp,vy:dy/l*sp,w:22,h:22,dark})}
+function spread2(){let sx=boss.x,sy=boss.y+boss.h/2;if(Math.random()<.5)for(let a of[-.35,-.18,0,.18,.35])bossBullets.push({x:sx,y:sy-20,vx:-24*Math.cos(a),vy:24*Math.sin(a),w:240,h:60,dark:true,beam:true});else{let base=Math.atan2(py+40-sy,px-sx);for(let o of[-.4,-.2,0,.2,.4]){let a=base+o;bossBullets.push({x:sx-30,y:sy-30,vx:14*Math.cos(a),vy:14*Math.sin(a),w:130,h:130,giant:true})}}}
+function phaseNext(now){boss.active=false;boss.transform=true;boss.transformStart=now;boss.phase++;bossBullets=[];hp=Math.min(20,hp+7);beep(300,.3)}
+function drawBoss(){let im=boss.transform?A.boss[10]:boss.phase>=2?A.dark:A.boss[boss.sprite];if(im?.complete&&im.naturalWidth)g.drawImage(im,boss.x,boss.y,boss.w,boss.h);else{rect(boss.x,boss.y,boss.w,boss.h,boss.phase===3?"#960000":boss.phase===2?"#3c005a":"#821eb4")}
+ let bw=500,bx=(W-bw)/2;rect(bx-4,26,bw+8,34,"#000");rect(bx,30,bw,26,"#444");rect(bx,30,bw*Math.max(0,boss.hp/boss.max),26,boss.phase===3?"#ff8c00":boss.phase===2?"#e61e28":"#b428dc");g.strokeStyle="#fff";g.strokeRect(bx,30,bw,26);text((boss.transform?"AWAKENING... ":(boss.phase===3?"KAIJU DARK BOSS  ":boss.phase===2?"DARK BOSS  ":"BOSS  "))+Math.max(0,boss.hp).toFixed(1)+" / "+boss.max,W/2,24,18,"#fff","center")}
+function draw2(){shooterBg();meteors.forEach(meteor);bullets.forEach(bullet);char(px+40,py+40,80,80,ui,gold);if(boss.active||boss.transform)drawBoss();bossBullets.forEach(bb);text("HP",30,40,22);rect(73,18,244,29,"#000");rect(75,20,240,25,"#444");rect(75,20,240*hp/20,25,"#32dc50");g.strokeStyle="#fff";g.strokeRect(75,20,240,25);text(hp+" / 20",325,41,22);text("SCORE: "+s2,30,85,26);
+ if(boss.phase===3)text("⚠ KAIJU PHASE ACTIVE! TOP-UI BEAM UNLOCKED!",30,125,20,"#ffa500");else if(ui)text("★ TOP-UI FORM ACTIVE (DMG 15.0)",30,125,20,"#0ff");else if(gold)text("★ GOLD POWER: "+Math.max(0,(7000-(performance.now()-goldStart))/1000).toFixed(1)+"s (DMG 8.0)",30,125,20,"#ffd700");
+ text("STAGE 2 "+(boss.phase===3?"[KAIJU]":boss.phase===2?"[PHASE 2]":""),W-30,40,22,"#fff","right");text("ARROWS / WASD = MOVE",W-30,68,18,"#fff","right");text("SPACE = SHOOT",W-30,95,18,"#fff","right");
+ if(boss.warning){if(Math.floor((performance.now()-boss.warningStart)/200)%2===0)rect(0,0,W,H,"rgba(255,0,0,.35)");text("WARNING",W/2,340,75,"#f00","center");text("BOSS APPROACHING",W/2,395,30,"#fff","center")}
+ if(boss.defeated){rect(0,0,W,H,"rgba(0,0,0,.78)");text("KAIJU DEFEATED!",W/2,290,65,"#ffe600","center");text("FINAL SCORE: "+s2,W/2,360,35,"#fff","center");text("PRESS SPACE / ENTER TO PLAY AGAIN",W/2,440,22,"#ffe600","center");text("PRESS ESC FOR MENU",W/2,480,22,"#fff","center")}
+}
+function shoot(){let now=performance.now();if(now-(shoot.last||0)<180)return;shoot.last=now;let d=ui?15:gold?8:1.5;bullets.push({x:px+80,y:py+35,w:ui?32:25,h:ui?14:10,damage:d,ui});beep(800)}
+function loop(now){let dt=Math.min(32,now-last);last=now;g.clearRect(0,0,W,H);if(stage===S.MENU)menu();else if(stage===S.FLAPPY){if(!over1)update1(dt);draw1()}else{if(!boss.defeated)update2(dt,now);draw2()}requestAnimationFrame(loop)}
+addEventListener("keydown",e=>{keys[e.key]=true;if([" ","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key))e.preventDefault();if(stage===S.MENU){if(e.key==="1"){stage=S.FLAPPY;reset1()}if(e.key==="2"){stage=S.SHOOTER;reset2()}}else if(e.key==="Escape"){stage=S.MENU;over1=false}else if(e.key.toLowerCase()==="m"){soundOn=!soundOn}else if(e.key===" "||e.key==="Enter"){if(stage===S.FLAPPY){if(over1){reset1()}else if(e.key===" ")birdV=-11.5}else if(stage===S.SHOOTER){if(boss.defeated)reset2();else if(e.key===" ")shoot()}}});
+addEventListener("keyup",e=>keys[e.key]=false);
+C.focus();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
